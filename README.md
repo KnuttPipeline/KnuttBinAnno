@@ -14,7 +14,7 @@ This pipeline requires a lot of disk space for its reference databases (~200GB)
 4. Run the `paper` rule with conda enabled
 
 ``` sh
-conda create -y -n snake -c bioconda -c conda-forge snakemake>=5.10 sra-tools
+conda create -y -n snake -c bioconda -c conda-forge snakemake>=5.10
 conda activate snake
 git clone -b paper https://github.com/KnuttPipeline/KnuttBinAnno.git
 cd KnuttBinAnno
