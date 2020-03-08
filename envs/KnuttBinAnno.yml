@@ -1,0 +1,14 @@
+name: KnuttBinAnno.yml
+channels:
+  - conda-forge
+  - bioconda
+  - genomedk
+dependencies:
+  - wget=1.20.1
+  - pyfasta=0.5.2
+  - samtools=1.9
+  - hmmer=3.3
+  - sourmash=3.2.0
+  - diamond=0.9.29
+  - natsort=7.0.1
+  - kofamscan=1.2.0 

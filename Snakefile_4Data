@@ -1,0 +1,96 @@
+## Snakefile - The main executable Snakefile for KnuttReads2Bins
+##
+## Knutt.org/Knutt2Reads2Bins
+
+##
+## dbCAN
+##
+
+#
+# Combine dbCAN Results
+#
+rule dbcanres:
+        input:
+                files = expand(rules.dbcanchunkconcat.output,sample=samplenames),
+        params:
+                samplenames =  samplenames
+        output:
+                summary = basedir_analysis+"/BinAnno/dbCAN.tsv",
+        conda:
+                "envs/R.yml"
+        script:
+                "scripts/parsers/sampleDataConcat.R"
+
+#
+# Combine CGC Results
+#
+rule cgcfinderres:
+        input:
+                files = expand(rules.cgcfinder.output,sample=samplenames),
+        params:
+                samplenames =  samplenames
+        output:
+                summary = basedir_analysis+"/BinAnno/dbCAN_cgc.tsv",
+        conda:
+                "envs/R.yml"
+        script:
+                "scripts/parsers/sampleDataConcat.R"
+
+#
+# Combine all CDS
+#
+rule allcds:
+	input:
+		expand(rules.splitcds.input.cds,sample=samplenames)
+	output:
+		cds=basedir_analysis+"/BinAnno/CDS.faa"
+	shell:
+		"cat {input} > {output}"
+
+#
+# Combine interproscan results
+#
+rule interprores:
+        input:
+                files = expand(rules.iprscanchunkconcat.output,sample=samplenames),
+        params:
+                samplenames =  samplenames
+        output:
+                summary = basedir_analysis+"/BinAnno/iprscan.tsv",
+        conda:
+                "envs/R.yml"
+        script:
+                "scripts/parsers/sampleDataConcat.R"
+
+
+#
+# Combine interproscan results
+#
+rule interprores:
+        input:
+                files = expand(rules.iprscanchunkconcat.output,sample=samplenames),
+        params:
+                samplenames =  samplenames
+        output:
+                summary = basedir_analysis+"/BinAnno/iprscan.tsv",
+        conda:
+                "envs/R.yml"
+        script:
+                "scripts/parsers/sampleDataConcat.R"
+
+
+
+#
+# Combine module results
+#
+rule kofamresults:
+        input:
+                files=expand(basedir_binanno+"/kofam/{sample}/{sample}_modules_all.tsv",sample=samplenames)
+        params:
+                samplenames = samplenames
+        output:
+                summary = basedir_analysis+"/BinAnno/kofammodules.tsv",
+        conda:
+                "envs/R.yml"
+        script:
+                "scripts/parsers/sampleDataConcat.R"

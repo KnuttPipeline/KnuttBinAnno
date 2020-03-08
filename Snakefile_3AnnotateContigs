@@ -1,0 +1,52 @@
+##
+## 
+##
+##
+
+# It is just a proxy for the Snakefile_KnuttReads2Bins. This is done to
+# make the workflow callable without speciying the Snakefile location
+# and also allow the "include"ing of this workflow without conflicts
+#  on the "all" rule
+
+sourmash_tmpl = config["output_dir"] + "/sourmash/{bin}_sourmash"
+
+rule sourmash_bin_sig:
+	input:
+		bin = bin_file_pattern
+	output:
+		sourmash_tmpl + ".sig"
+	log:
+		sourmash_tmpl + ".log"
+	conda:
+		"envs/KnuttBinAnno.yml"
+	shell:
+		"sourmash compute -k {config[sourmash_kmers]} --scaled {config[sourmash_scaled]} -o {output} {input} &> {log}"
+
+rule sourmash_compare:
+	input:
+		expand(sourmash_tmpl + ".sig", bin=bins)
+	output:
+		fortran = config["output_dir"] + "/sourmash/compare_bins",
+		csv = config["output_dir"] + "/sourmash/compare_bins.csv"
+	log:
+		config["output_dir"] + "/sourmash/compare_bins.log"
+	conda:
+		"envs/KnuttBinAnno.yml"
+	threads:
+		4
+	shell:
+		 "sourmash compare -k {config[sourmash_compare_kmer]} -p {threads} -o {output.fortran} --csv {output.csv} {input} &> {log}"
+
+rule sourmash_compare_plot:
+	input:
+		rules.sourmash_compare.output.fortran
+	params:
+		dir = config["output_dir"] + "/sourmash/"
+	output:
+		expand(config["output_dir"] + "/sourmash/compare_bins.{sfx}.png",sfx=["dendro","hist","matrix"])
+	log:
+		config["output_dir"] + "/sourmash/compare_bins_plots.log"
+	conda:
+		"envs/KnuttBinAnno.yml"
+	shell:
+		"sourmash plot --labels --output-dir {params.dir} {input} &> {log}"

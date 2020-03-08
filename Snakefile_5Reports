@@ -1,0 +1,121 @@
+## Snakefile - The main executable Snakefile for KnuttReads2Bins
+##
+## Knutt.org/Knutt2Reads2Bins
+
+
+
+
+
+#
+# Create dbCAN report
+#
+rule dbcanreport:
+	input:
+		dbcan=rules.dbcanres.output,
+		cgc=rules.cgcfinderres.output,
+		cds=rules.allcds.output.cds,
+		commons="scripts/Analyze/Report/commonReport.R",
+	output:
+		basedir_analysis+"/report/9binanno_dbcan.html"
+	threads:
+		2
+	conda:
+		"envs/R.yml"
+	script:
+		"scripts/Analyze/Report/binanno_dbCAN.Rmd"
+
+
+#
+# Create binning report
+#
+rule interproreport:
+	input:
+		ipr=rules.interprores.output,
+		cds=rules.allcds.output.cds,
+		commons="scripts/Analyze/Report/commonReport.R",
+	output:
+		basedir_analysis+"/report/9binanno_interpro.html"
+	threads:
+		2
+	conda:
+		"envs/R.yml"
+	script:
+		"scripts/Analyze/Report/binanno_interpro.Rmd"
+
+
+
+
+#
+# Eggnog report
+#
+rule eggnogreport:
+	input:
+		eggnog=rules.eggnogres.output,
+		cds=rules.allcds.output.cds,
+		commons="scripts/Analyze/Report/commonReport.R",
+	output:
+		basedir_analysis+"/report/9binanno_interpro.html"
+	threads:
+		2
+	conda:
+		"envs/R.yml"
+	script:
+		"scripts/Analyze/Report/binanno_eggnog.Rmd"
+
+
+#
+# Kofam report
+#
+rule kofamreport:
+	input:
+		kofam=rules.kofamresults.output,
+		cds=rules.allcds.output.cds,
+		commons="scripts/Analyze/Report/commonReport.R",
+	output:
+		basedir_analysis+"/report/9binanno_kofam.html"
+	threads:
+		2
+	conda:
+		"envs/R.yml"
+	script:
+		"scripts/Analyze/Report/binanno_KOFAMKoala.Rmd"
+
+
+##
+## Hyddb
+##
+
+#
+# Combine module results
+#
+rule hyddbresults:
+        input:
+                files=expand(rules.hyddbsample.output,sample=samplenames)
+        params:
+                samplenames = samplenames
+        output:
+                summary = basedir_analysis+"/BinAnno/hyddb.tsv",
+        conda:
+                "envs/R.yml"
+        script:
+                "scripts/parsers/sampleDataConcat.R"
+
+
+#
+# hyddb report
+#
+rule hyddbreport:
+	input:
+		hyddb=rules.hyddbresults.output,
+		cds=rules.allcds.output.cds,
+		commons="scripts/Analyze/Report/commonReport.R",
+	output:
+		basedir_analysis+"/report/9binanno_hyddb.html"
+	threads:
+		2
+	conda:
+		"envs/R.yml"
+	script:
+		"scripts/Analyze/Report/binanno_hyddb.Rmd"
+
+

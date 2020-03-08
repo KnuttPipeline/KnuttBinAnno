@@ -1,0 +1,13 @@
+name: hyddbclient
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - beautifulsoup4
+  - blast=2.9.0
+  - requests-toolbelt
+  - pandas=0.25.3
+  - biopython
+  - python=3
+

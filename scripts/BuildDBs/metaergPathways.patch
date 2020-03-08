@@ -1,0 +1,12 @@
+149,156c149,150
+< 	    my @kegg_pathways = ();
+< 	    my @metacyc_pathways = ();
+< 	    if(exists $gene2pathways{$geneid}->{KEGG}){
+< 		push (@kegg_pathways, keys %{$gene2pathways{$geneid}->{KEGG}});
+< 	    }
+< 	    if(exists $gene2pathways{$geneid}->{metacyc}){
+< 		push (@metacyc_pathways, keys %{$gene2pathways{$geneid}->{metacyc}});
+< 	    }
+---
+> 	    my @kegg_pathways = $f->get_tag_values("kegg_pathway_id") if $f->has_tag("kegg_pathway_id"); 
+> 	    my @metacyc_pathways = $f->get_tag_values("metacyc_pathway_id") if $f->has_tag("metacyc_pathway_id"); 

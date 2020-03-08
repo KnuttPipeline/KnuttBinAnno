@@ -1,0 +1,7 @@
+name: oldhmmer
+channels:
+  - conda-forge
+  - bioconda
+  - genomedk
+dependencies:
+  - hmmer=3.1b2

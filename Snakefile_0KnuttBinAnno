@@ -1,0 +1,34 @@
+##
+## Snakefile_0KnuttBinAnno - The Snakefile combining the subfiles.
+##
+## Knutt.org/Knutt2Reads2Bins
+
+# It finds the bin files 
+
+import os
+
+configfile: "config.yml"
+
+# Reference data dir
+basedir_dbs = config["reference_dir"]
+
+bin_file_pattern = os.path.join(config["bin_input_dir"],
+                                       config["bin_files"])
+
+bin_glob = glob_wildcards(bin_file_pattern)
+
+bins = bin_glob.bin
+
+wildcard_constraints:
+   bin = "|".join(bins)
+
+include: "Snakefile_1BuildDBs"
+include: "Snakefile_2AnnotateORF"
+include: "Snakefile_3AnnotateContigs"
+#include: "Snakefile_4Data"
+#include: "Snakefile_5Reports"
+
+rule split:
+	input:
+		expand(expand(chunk, j=chunk_numbers, bin="{bin}"), bin=bins)
+	message: "Splitting all bin CDS files"
