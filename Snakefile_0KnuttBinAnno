@@ -32,3 +32,17 @@ rule split:
 	input:
 		expand(expand(chunk, j=chunk_numbers, bin="{bin}"), bin=bins)
 	message: "Splitting all bin CDS files"
+
+rule data:
+	input:
+		rules.installMetaErg.output,
+		rules.downloadMetaErg.output,
+		rules.downloaddbCAN2hmmer.output,
+		rules.downloadtfmodels.output,
+		rules.downloadtcdb.output,
+		rules.downloaddbCAN2hotpep.output,
+		expand(rules.dbcan_diamond_index.output, db=dbcandiamonddbs_eval.keys()),
+		rules.hyddbrps.output,
+		rules.downloadInterProScan.output,
+		rules.downloadkofam.output,
+		rules.downloadeggnogdata.output
