@@ -1,0 +1,148 @@
+---
+title: "dbCAN CAZy Annotation"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    theme: sandstone
+---
+
+```{r, include=FALSE}
+#save.image()
+dbCANres.file <- snakemake@input[["dbcan"]]
+cds.file <- snakemake@input[["cds"]]
+commonscript.file <- snakemake@input[["commons"]]
+threads <- snakemake@threads
+#taxcols=c("superkingdom","phylum","class","order","family","genus","species")
+files <- unlist(c(dbCANres.file, cds.file))
+source(commonscript.file)
+source("scripts/commonGFF3Tools.R")
+suppressPackageStartupMessages(library(viridis))
+suppressPackageStartupMessages(library(GOSemSim))
+suppressPackageStartupMessages(library(GO.db))
+commonOptions(threads)
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(KEGGREST))
+suppressPackageStartupMessages(library(scales))
+bins <- data.table(bin=snakemake@params$bins)
+dbCANres <- readData(dbCANres.file, bins, readfun=function(...)readBaseGFF(fread(..., fill = T)))
+dbCANres$Name <- NULL
+setnames(dbCANres,c("seqid"),c("cds"),skip_absent = T)
+cdsdat <- readData(cds.file, bins, readfun=readCDS)
+dbCANres <- dbCANres[cdsdat,on=c("bin","cds")]
+dbCANres[,source:=sub("^[^-]+-(.+)$","\\1",source)]
+```
+
+# Overview
+
+## Row
+
+### Application Note
+
+dbCAN provides a machine parseable version of the CAZy database and tools to classify carbohydrate active enzymes. Because the Python tool still is in development and a little bit unstable, the workflow has been reimplemented for this pipeline. Results should be compared with the orginal tool.
+
+> Rendered at: `r Sys.time()`.
+
+## Row
+
+### File Note
+
+```{r}
+knitr::kable(genInfoBlock(files))
+```
+> The table shows the files which have been used to generate this report.
+
+
+## Row
+
+### CDS annotated
+
+```{r}
+dbCANrescounts <- dbCANres[,.N,by=c("bin","source")]
+dbCANrescounts[,rel:=N/sum(N)*100,by="bin"]
+dbCANrescounts <- dbCANrescounts[!is.na(source)]
+
+ggplotly(ggplot(dbCANrescounts) + aes(x=bin,y=rel,fill=source) + geom_bar(stat="identity",position="stack") + labs(x="Bin",fill="Search Tool",y="Of all Hits") + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the CDS were annotated. 
+
+### Contigs annotated
+
+```{r}
+contigcounts <- unique(dbCANres[,.(bin,cid,cds,source)])
+contigcounts <- contigcounts[,.(rel=sum(!is.na(source))/.N*100),by=c("bin","cid")]
+ggplotly(ggplot(contigcounts) + aes(x=rel,color=bin) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="bin",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")) + scale_color_brewer(palette = sample_palette))
+```
+
+> Which percentage of the contigs contains a annotation?
+
+
+## Row
+
+### Score Distribution
+
+```{r}
+ggplotly(ggplot(dbCANres[!is.na(score)&score!=".",.(score=log10(as.numeric(score)+1),bin)]) + aes(x=score,color=bin) + geom_density(trim=T) + labs(x="log10(eval+1)",y="Density estimate",color="Bin"))
+```
+
+> The distribution of the log10(e-values+1).
+
+## Row
+
+### Transporter Types
+
+
+```{r}
+transcounts <-as.data.table(unnestSingleColUnique(dbCANres[,c("bin","TC")], "TC"))
+transcounts[,TC:=sub("^([^\\.]+\\.[^\\.]+)\\..+","\\1",TC)]
+transcounts <- transcounts[,.N,by=c("bin","TC")]
+transcounts[,rel:=N/sum(N)*100,by=c("bin")]
+transcounts <- as.data.table(complete(as_tibble(transcounts),nesting(bin),TC,fill = list(rel=0, N=0)))
+setorder(transcounts,TC)
+ggplotly(ggplot(transcounts) + aes(x=bin,y=TC,fill=rel) + geom_raster() + labs(x="Bin",fill="Class",y="Of bin") + scale_fill_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> dbCAN uses the [Transporter Classification Database](http://www.tcdb.org/browse.php) to find transporters, which it uses for its gene cluster search.
+
+## Row
+
+### CAZy main classes
+
+```{r}
+cazydat <- as.data.table(unnestSingleColUnique(dbCANres[,c("bin","CAZY")], "CAZY"))
+setnames(cazydat, "CAZY", "CazySubClasses")
+cazymainregex <- "^([A-Z]{2,3}).+"
+cazydat[,CazyClasses:=sub(cazymainregex,"\\1",CazySubClasses)]
+cazydat <- cazydat[,.N,by=c("bin","CazyClasses","CazySubClasses")]
+
+dat <- cazydat[,.(.N),by=c("bin","CazyClasses")]
+dat[,rel:=N/sum(N)*100,by="bin"]
+ggplotly(ggplot(dat) + aes_string(x="bin",y="rel",fill="CazyClasses")+ geom_bar(stat="identity")+ xlab("Bin") + scale_y_continuous(labels = function(x) paste0(x, "%"))+ ylab("Percentage of Hits") + labs(fill="CAZy Class") + theme(axis.text.x = element_text(angle = 33)))
+```
+
+> The distribution of the main classes among the samples and bins. Different assignments to the same CDS were each counted as one each.
+
+## Row
+
+```{r,results="asis"}
+dat <- filtermax(cazydat,groupcol=c("CazyClasses","bin"),filtercol="CazySubClasses",maxn=30,additionalsubcols=c(),additionalparentcols =c("bin"))
+dat[,rel:=N/sum(N)*100,by=c("bin")]
+dat <- as.data.table(complete(dat,nesting(bin),nesting(CazyClasses,CazySubClasses),fill=list(N=0,rel=0)))
+orderHeatMap(dat,"bin",field = "rel",grouping = "CazySubClasses")
+dat <- split(dat,dat$CazyClasses)
+dat <- lapply(dat,function(dat)orderHeatMap(dat,"CazySubClasses",field = "rel",grouping = "bin"))
+fixbins = function(dat){
+  dat[,c("bin"):=tstrsplit(bin,"\n",fixed=T)]
+  dat
+}
+plots <- lapply(dat,function(dat)ggplot(fixbins(dat))+aes_string(x="bin",y="CazySubClasses",fill="rel") +labs(fill="% of filtered\n Reads")+ geom_raster() + xlab("Bin") + ylab("CAZy Subclass")+theme(axis.text.x = element_text(angle = 33)))
+plots <- plots[names(plots)!="Unclassified"]
+for (i in seq_along(plots)) {
+    plotname = names(plots)[[i]]
+    drawplotasis(paste0(plotname),"The 30 most common subgroups in every bin are shown in this plot, others have been aggregated into \"Other\". The subclasses have been sorted by using Wards clustering with euclidian distance in every group and the bina on all subgroups combined.",ggplotly(plots[[i]]),576*1.75)
+    if(i!=length(plots))
+      drawrow()
+  }
+```
+

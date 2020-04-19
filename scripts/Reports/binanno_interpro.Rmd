@@ -1,0 +1,217 @@
+---
+title: "InterProScan Annotation"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    theme: sandstone
+---
+
+```{r, include=FALSE}
+interprores.file <- snakemake@input[["ipr"]]
+cds.file <- snakemake@input[["cds"]]
+commonscript.file <- snakemake@input[["commons"]]
+threads <- snakemake@threads
+bins <- data.frame(bin=snakemake@params$bins)
+#taxcols=c("superkingdom","phylum","class","order","family","genus","species")
+files <- unlist(c(interprores.file,cds.file))
+source(commonscript.file)
+commonOptions(threads)
+suppressPackageStartupMessages(library(seqinr))
+suppressPackageStartupMessages(library(viridis))
+suppressPackageStartupMessages(library(GOSemSim))
+suppressPackageStartupMessages(library(GO.db))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(KEGGREST))
+interprores <- readData(interprores.file, bins, readfun=function(...)fread(..., sep="\t",  fill = T))
+setnames(interprores,c("seqid"),c("cds"),skip_absent = T)
+cdsdat <- readData(cds.file, bins, readfun=readCDS)
+interprores <- cdsdat[interprores, on=c("bin","cds")]
+
+```
+
+# Overview
+
+## Row
+
+### Application Note
+
+The annotation in this report was done with InterProScan. It combines the analysis tools for the databases integrated into InterPro and adds the corresponding InterPro entries to the results.
+
+> Rendered at: `r Sys.time()`.
+
+## Row
+
+### File Note
+
+```{r}
+knitr::kable(genInfoBlock(files))
+```
+> The table shows the files which have been used to generate this report.
+
+
+## Row
+
+### CDS annotated
+
+```{r}
+iprcounts <- cdsdat[,.(N=.N,Nhits=sum(cds %in% interprores$cds),Nhits_ipr=sum(cds %in% interprores[interpro!="",cds])),by=bin]
+iprcounts[,Nhits:=Nhits-Nhits_ipr]
+iprcounts <- melt(iprcounts, id.vars = c("bin","N"))
+iprcounts[,value:=value/N*100]
+iprcounts[variable=="Nhits",variable:="W/o IPR fam."]
+iprcounts[variable=="Nhits_ipr",variable:="With IPR fam."]
+ggplotly(ggplot(iprcounts) + aes(x=bin,y=value,fill=variable) + geom_bar(stat="identity",position="stack") + labs(x="Bin",fill="Type",y="Of all CDS") + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the CDS were annotated with an InterPro Entry. 
+
+### Contigs annotated
+
+```{r}
+contigcounts<-cdsdat[,.(Nhits=sum(cds %in% interprores$cds)/.N*100),by=c("bin","cid")]
+ggplotly(ggplot(contigcounts) + aes(x=Nhits,color=bin) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="Sample",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the contigs contains a annotation?
+
+
+## Row
+
+### Annotation Types
+
+```{r}
+typecounts <- interprores[,.N,by=c("bin","analysis")]
+typecounts[,rel:=N/sum(N)*100,by="bin"]
+ggplotly(ggplot(typecounts) + aes(x=bin,y=rel,fill=analysis) + geom_bar(stat="identity",position="stack",color="black") + scale_fill_hue("clarity") + labs(x="Bin",fill="Type",y="Of all Hits") + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> The distribution of hits among the applications. Multiple hits for the same CDS weren't counted as 1.
+
+## Row
+
+### GO clustering
+
+The background data for GOSemSim was calculated by taking all BP GO terms for the CDS (Multiple hits (same GO terms) for the same CDS only counted 1). The distance between the bins was calculated by applying the `mclusterSim` function with the relevance method and the best-match-average combinations strategy. With default parameters IEA evidence would be ignored, but this is turned off. Clustering was performed with hclust using the Ward.2 linkage method. This is just an experiment. The GO terms probably aren't specific enough for something like this. Currently turned off.
+
+```{r,include=F, eval=F}
+goterms <- interprores[GO!="",.(cds,GO=strsplit(GO,"|",fixed=T))]
+goterms <-goterms[,.(GO=unique(c(GO))),by=c("cds")]
+goterms <- as.data.table(unnest(as_tibble(goterms),c("GO")))
+bpterms <- unique(unlist(as.list(GOBPOFFSPRING)))
+ONTOLOGY <- "BP"
+goterms <- goterms[GO %in% bpterms,.(cds,GO, EVIDENCE="IEA",ONTOLOGY="BP")]
+ic <- GOSemSim:::computeIC(goterms, ONTOLOGY)
+background <- new("GOSemSimDATA", keys = unique(goterms$cds), ont = ONTOLOGY, geneAnno = goterms, metadata = data.frame(),IC=ic)
+bindat <- interprores[,.(bin,cds)]
+bingenes <- split(bindat$cds,bindat$bin)
+clusterres <- mclusterSim(bingenes, semData=background, measure="Rel", combine="BMA",drop=NULL)
+clusterres <- as.dist(1-clusterres)
+clusterres <- hclust(clusterres,method="ward.D2")
+```
+
+> Clustering according to GO semantic similarity infos
+
+## Row
+
+
+```{r,results="asis", eval=F}
+for (i in seq_along(clusterres)) {
+    name = names(clusterres)[[i]]
+      if(i%%2==0){
+        drawrow()
+        drawn=T
+      }else
+        drawn=F
+  cat(paste("### GO Semantic similarity:",name))
+  plot(as.dendrogram(clusterres[[name]]),main=name)
+  cat("\n>The clustering of the bins according to GO (BP) semantic similarity\n")
+}
+  if(!drawn)
+    drawrow()
+```
+
+### All bins compared
+
+```{r, eval=F}
+filterGOBackground=function () {
+  goterms=interprores[GO!="",.(sample,cds,GO=strsplit(GO,"|",fixed=T))]
+  goterms=goterms[,.(GO=unique(c(GO))),by=c("cds","sample")]
+  goterms = as.data.table(unnest(as_tibble(goterms),c("GO")))
+  bpterms=unique(unlist(as.list(GOBPOFFSPRING)))
+  ONTOLOGY="BP"
+  goterms = goterms[GO %in% bpterms,.(cds,GO,EVIDENCE="IEA",ONTOLOGY="BP",sample)]
+  res <- new("GOSemSimDATA", keys = unique(goterms$cds), ont = ONTOLOGY, geneAnno = goterms, metadata = data.frame())
+  return(res)
+}
+bindat = interprores[bin!="unbinned",.(sample,bin,cds)]
+bindat[,bin:=paste0(sample,"\n",bin)]
+data = filterGOBackground()
+bingenes = split(bindat$cds,bindat$bin)
+clusterres = mclusterSim(bingenes, semData=data, measure="Wang", combine="BMA",drop=NULL)
+clusterres = as.dist(1-clusterres)
+clusterres = hclust(clusterres,method="ward.D2")
+plot(as.dendrogram(clusterres),main="All")
+```
+
+> For this version with all bins the Wang graph based similarity was used instead of a information content based method.
+
+## Row
+
+### KEGG Pathways (Bins)
+
+```{r}
+keggpathways=interprores[pathways!="",.(bin,pathways=strsplit(pathways,"|",fixed=T))]
+keggpathways = as.data.table(unnest(as_tibble(keggpathways),c("pathways")))
+keggpathways = keggpathways[grepl("^KEGG: .+",pathways),]
+keggpathways[,pathways:=sub("^KEGG: (.+)","\\1",pathways)]
+pathways_str=transpose(strsplit(keggpathways$pathways,"+",fixed=T),fill="")
+keggpathways[,c("map","ecs"):=list(pathways_str[[1]],trimws(do.call(paste,pathways_str[2:length(pathways_str)])))]
+keggpathways[,pathways:=NULL]
+keggpathways = unique(keggpathways)
+keggpathways[,ecs:=strsplit(ecs," ",T)]
+keggpathways = as.data.table(unnest(as_tibble(keggpathways),c("ecs")))
+keggpathways = unique(keggpathways)
+maps=lapply(unique(keggpathways$map),function(x)tryCatch(keggGet(paste0("ec",x))[[1]], error = function(e)e))
+mapselector=sapply(sapply(maps,"[[","NAME"),length)!=0
+maps=maps[mapselector]
+maps_look=data.table(map=unique(keggpathways$map)[mapselector],map_name=sapply(maps,"[[","NAME"),map_class=sapply(maps,"[[","CLASS"))
+keggpathways = keggpathways[maps_look,on="map"]
+keggpathways[,map:=paste0("ec",map)]
+keggpathways[,c("category","class"):=tstrsplit(map_class,";",fixed=T)]
+keggpathways[,map_class:=NULL]
+binmaps = keggpathways[,.(Hits=.N,query=paste0("<a href=\"https://www.genome.jp/kegg-bin/show_pathway?",map[[1]],"+",paste0(ecs,collapse="+"),"\">",map[[1]],"</a>")),by=c("bin","category","class","map_name")]
+setnames(binmaps,c("bin","category","class","map_name","query"),c("Bin","Category","Class","Pathway","Link"))
+datatable(binmaps,escape = F)
+```
+
+> The KEGG Pathways annotated (bin wise)
+
+
+```{r,eval=F,include=F}
+binCount <- function(binvector){
+  binvector = unique(binvector)
+  if(length(binvector)==1&&binvector=="unbinned")
+    return(-1.0)
+  else
+    return(as.double(length(binvector)))
+}
+
+ecs2ko = unique(keggpathways$ecs)
+ecs2ko = 
+
+keggpathways_view = dcast(keggpathways,sample~ecs,value.var = "bin",fun.aggregate = binCount)
+keggpathways_view = as.data.frame(keggpathways_view)
+rownames(keggpathways_view) = keggpathways_view$sample
+keggpathways_view$sample=NULL
+keggpathways_view=t(keggpathways_view)
+
+tmpdir=tempfile()
+dir.create(tmpdir)
+function(ecs,maps){
+  pathview(keggpathways_view,pathway.id = keggpathways[is.na(map_name),map],species="ko",kegg.dir = tmpdir,gene.idtype="KEGG",dsicrete=list(gene=T, cpd=FALSE))
+
+}
+unlink(tmpdir,recursive = T)
+```
+

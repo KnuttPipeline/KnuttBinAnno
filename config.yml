@@ -2,34 +2,29 @@
 ## config.yml - The configuration file for KnuttBinAnno
 ##
 
-
-#
-# Input/Output files
-#
-
 # Where to look for the bins
 bin_input_dir: "input"
-
 # The naming pattern for the bins
 # Use the wildcard {bin}
 bin_files: "{bin}.fa"
-
 # Where to place the output files
 output_dir: "output"
-
 # Where to place reference/database files
 reference_dir: "reference_data"
-
+# Which tools should be included in the all gff:
+# dbcan, interpros, eggnog, kofam, hyddb
+all:
+  - dbcan
+  - interpro
+  - eggnog
+  - kofam
+  - hyddb
 # Number of chunks to use for annotation
 chunk_count: 8
-
+# Used for MetaErg execution and ORF prediction
 min_contiglen: 200
 min_orflen: 180
-
-sourmash_kmers: "21,31,51"
-sourmash_scaled: 10000
-sourmash_compare_kmer: "31"
-
+# dbCAN settings
 dbCAN_diamond_eval: 1.0e-102
 hotpep_hits: 6
 hotpep_freq: 2.6
@@ -41,9 +36,9 @@ stp_hmmscan_eval: 1.0e-4
 stp_hmmscan_cov: 0.3
 tcdb_diamond_eval: 1.0e-10
 dbcan_cgc_maxnotdbcangenespacers: 1
-
+# EggNOG Settings
 eggnog_eval: 0.001
 eggnog_minscore: 60
-
-
+# E-val filter, when no score threshold is available
+# Only used in the "all files"
 kofam_helper_eval: 1.0e-10

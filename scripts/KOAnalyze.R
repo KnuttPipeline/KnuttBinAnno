@@ -7,14 +7,9 @@ library(pbapply)
 options(warn=2)
 #pboptions(type="timer")
 
-ko.path = "Desktop/old.tsv"
-out.path = "Desktop/old_Weurt_kos_all_modules.tsv"
+ko.path <- snakemake@input[[1]]
+out.path <- snakemake@output[[1]]
 
-
-if(exists("snakemake")){
-  ko.path = snakemake@input[[1]]
-  out.path = snakemake@output[[1]]
-}
 
 ko.data <- read.delim(ko.path, header = F)
 colnames(ko.data) <- c("CDS", "KO")
@@ -259,5 +254,5 @@ result <-  cbind(result,
 result <- result[result$blockhits != 0,]
 result <- merge(modules.data, result, by = "module")
 }
-write.table(result, out.path, row.names = F,sep = "\t")
+write.table(result, out.path, row.names = F,sep = "\t", quote=F)
 

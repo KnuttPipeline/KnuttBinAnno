@@ -13,12 +13,3 @@
 configfile: "config.yml"
 
 include: "Snakefile_0KnuttBinAnno"
- 
-rule paper:
-    input:
-        rules.dbCAN.output,
-        rules.cgc.output,
-        rules.hyddb.output,
-        rules.kofam.input,
-        rules.interpro.output,
-        rules.eggnog.output

@@ -1,48 +1,932 @@
-##
-## Snakefile_0KnuttBinAnno - The Snakefile combining the subfiles.
-##
-## Knutt.org/Knutt2Reads2Bins
-
-# It finds the bin files 
-
 import os
 
 configfile: "config.yml"
 
 # Reference data dir
 basedir_dbs = config["reference_dir"]
-
 bin_file_pattern = os.path.join(config["bin_input_dir"],
                                        config["bin_files"])
-
 bin_glob = glob_wildcards(bin_file_pattern)
-
 bins = bin_glob.bin
 
 wildcard_constraints:
    bin = "|".join(bins)
 
-include: "Snakefile_1BuildDBs"
-include: "Snakefile_2AnnotateORF"
-include: "Snakefile_3AnnotateContigs"
-#include: "Snakefile_4Data"
-#include: "Snakefile_5Reports"
+basedir_bench = config["output_dir"] + "/Benchmarking"
+basedir_dbs = config["reference_dir"]
+basedir_reporting = config["output_dir"] + "/Reports"
+
+metaerg_tmpl = config["output_dir"] + "/MetaErg/{bin}"
+metaergdir = basedir_dbs + "/MetaErg_install"
+metaergdatadir = basedir_dbs + "/MetaErg_db"
+
+gene_tmpl = config["output_dir"] + "/split/{bin}_cds." 
+
+dbcan_tmpl = config["output_dir"] + "/dbCAN/{bin}/{bin}_dbCAN_"
+dbcan_fasta_files = basedir_dbs + "/dbCAN2/seqs/"
+dbcan_data_files = basedir_dbs + "/dbCAN2/data/"
+dbcan_hmmer_files = basedir_dbs + "/dbCAN2/hmm/"
+dbcan_benchmark = basedir_bench + "/dbCAN2/dbCAN2_{app}_{{bin}}_{{j}}"
+
+hyddb_tmp = config["output_dir"] + "/HydDB/{bin}/{bin}_HydDB"
+kofam_tmp = config["output_dir"] + "/KofamKOALA/{bin}/{bin}_KofamKOALA"
+eggnog_tmp = config["output_dir"] + "/eggNOG/{bin}/{bin}_eggNOG"
+iprscan_tmp = config["output_dir"] + "/InterProScan/{bin}/{bin}_iprscan"
+
+concatwithheader = "awk '(NR == 1) || (FNR > 1)' {input} > {output}"
+
+chunk_numbers = [str(i).zfill(len(str(config["chunk_count"]))) for i in range(config["chunk_count"])]
+chunk = gene_tmpl + "{j}.faa"
+
+localrules: split_genes
+
+# Download sequence ontology
+rule downloadso:
+   version: "1.0"
+   output:
+      basedir_dbs + "/Ontologies/so.obo"
+   shell:
+      "wget -qO {output} https://raw.githubusercontent.com/The-Sequence-Ontology/SO-Ontologies/master/Ontology_Files/so.obo"
+
+
+# Install MetaErg
+rule installmetaerg:
+   version: "1.0"
+   output:
+      directory(metaergdir)
+   log:
+      basedir_dbs + "/install_metaerg.log"
+   resources:
+      mem_mb = 2048,
+      disk_mb = 3000
+   conda:
+      "envs/metaerg.yml"
+   message:
+      "Installing MetaErg"
+   shell:
+      ("{{ bash scripts/BuildDBs/installMetaErg.sh {output} && "
+      "patch {output}/metaerg/bin/output_reports.pl  scripts/BuildDBs/metaergPathways.patch ;  }} &> {log} ")
+
+
+# Download MetaErg data
+rule downloadmetaergdat:
+   version: "1.0"
+   output:
+      directory(metaergdatadir)
+   resources:
+      disk_mb = 50000,
+      mem_mb = 2048
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message: "Downloading MetaErg data"
+   shell:
+      "mkdir -p {output} && wget http://ebg.ucalgary.ca/metaerg/db.tar.gz -qO- | tar xzf - -C {output} --strip-components=1"
+
+
+rule metaergRefData:
+   version: "1.0"
+   input:
+      rules.installmetaerg.output,
+      rules.downloadmetaergdat.output
+   message:
+      "Installed MetaErg"
+
+
+rule metaergsample:
+   version: "1.0"
+   input:
+      bin = bin_file_pattern,
+      datadir = rules.downloadmetaergdat.output,
+      installdir = rules.installmetaerg.output
+   params:
+      locustag = "{bin}",
+      dir = metaerg_tmpl
+   output:
+      cds = metaerg_tmpl + "/data/cds.faa",
+      cdsn = metaerg_tmpl + "/data/cds.ffn",
+      gff = metaerg_tmpl + "/data/master.gff.txt",
+      rrna_tab = metaerg_tmpl + "/data/rRNA.tab.txt",
+      mastertsv = metaerg_tmpl + "/data/master.tsv.txt"
+   log:
+      metaerg_tmpl + "/metaerg_run.log"
+   benchmark:
+      basedir_bench + "/metaerg_{bin}.tsv"
+   threads:
+      32
+   resources:
+      mem_mb = 4*1024,
+      disk_mb = lambda wildcards,input:sum(i.size for i in input) + 15 * input.bin.size
+   conda:
+      "envs/metaerg.yml"
+   message:
+      "Running metaerg on {input.bin}"
+   shell:
+      "{{ export MinPath=$(realpath {input.installdir})/MinPath ; export PATH=$PATH:$(realpath {input.installdir})/bin;  metaerg.pl -db {input.datadir} --mincontiglen {config[min_contiglen]} --minorflen {config[min_orflen]} --outdir {params.dir} --cpus {threads} {input.bin} --force --locustag {params.locustag} && samtools faidx {output.cds} ; }} &> {log}"
+
+
+rule metaerg:
+   version: "1.0"
+   input:
+      expand(metaerg_tmpl + "/data/master.tsv.txt", bin=bins)
+   message:
+      "Ran MetaErg for all bins"
+
+##
+## Split
+##
+
+rule split_genes:
+   version: "1.0"
+   input:
+      rules.metaergsample.output.cds
+   params:
+      newloc = f"{gene_tmpl}faa"
+   output:
+      expand(chunk, j=chunk_numbers, bin="{bin}")
+   log:
+      gene_tmpl = gene_tmpl + "log"
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message:
+      "Splitting {input} into {config[chunk_count]} chunks"
+   shell:
+      "cp {input} {params.newloc} && pyfasta split -n {config[chunk_count]} {params.newloc} &> {log} ; rm {params.newloc}"
+
 
 rule split:
-	input:
-		expand(expand(chunk, j=chunk_numbers, bin="{bin}"), bin=bins)
-	message: "Splitting all bin CDS files"
+   version: "1.0"
+   input:
+      expand(expand(chunk, j=chunk_numbers, bin=bins))
+   message:
+      "Split the bin CDS files"
 
-rule data:
-	input:
-		rules.installMetaErg.output,
-		rules.downloadMetaErg.output,
-		rules.downloaddbCAN2hmmer.output,
-		rules.downloadtfmodels.output,
-		rules.downloadtcdb.output,
-		rules.downloaddbCAN2hotpep.output,
-		expand(rules.dbcan_diamond_index.output, db=dbcandiamonddbs_eval.keys()),
-		rules.hyddbrps.output,
-		rules.downloadInterProScan.output,
-		rules.downloadkofam.output,
-		rules.downloadeggnogdata.output
+
+##
+## dbCAN
+##
+
+# Download the CAZYdb from dbCAN2
+rule downloadCAZYdb:
+   version: "1.0"
+   output:
+      fasta = dbcan_fasta_files + "CAZyDB.fasta",
+      tsv = dbcan_data_files + "CAZyDB.tsv",
+      descr = dbcan_data_files + "CAZyDB-fam-activities.txt"
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message:
+      "Downloading dbCAN data and fasta files"
+   shell:
+      ("echo 'sseqid\tCAZyECs' > {output.tsv} && "
+      "wget -qO- http://bcb.unl.edu/dbCAN2/download/Databases/CAZyDB.07312019.fa | tr '|' ' ' | "
+      "tee {output.fasta} | grep '>' | tr -d '>' | sed 's/ /\t/' >> {output.tsv} && "
+      "wget -qO {output.descr} http://bcb.unl.edu/dbCAN2/download/Databases/CAZyDB.07312018.fam-activities.txt")
+
+
+# Download dbCAN2 hmmer models
+rule downloaddbCAN2hmmer:
+   version: "1.0"
+   output:
+      raw = dbcan_hmmer_files + "dbCAN-HMMdb.txt",
+      index = expand(dbcan_hmmer_files + "dbCAN-HMMdb.txt.{ext}", ext=["h3i", "h3m", "h3f", "h3p"])
+   conda:
+      "envs/oldhmmer.yml"
+   message:
+      "Downloading dbCAN CAZy HMMER files"
+   shell:
+      "wget -qO {output.raw} http://bcb.unl.edu/dbCAN2/download/dbCAN-HMMdb-V8.txt && hmmpress {output.raw}"
+
+
+# Download tf,stp models
+rule downloadtfmodels:
+   version: "1.0"
+   output:
+      tf1 = dbcan_hmmer_files + "tf-1.hmm",
+      tf2 = dbcan_hmmer_files + "tf-2.hmm",
+      stp = dbcan_hmmer_files + "stp.hmm",
+      indices = expand(dbcan_hmmer_files + "{model}.hmm.{ext}", model=["tf-1", "tf-2", "stp"], ext=["h3i", "h3m", "h3f", "h3p"])
+   conda:
+      "envs/oldhmmer.yml"
+   message:
+      "Downloading additional dbCAN HMMER files"
+   shell:
+      ("wget -qO {output.tf1} http://bcb.unl.edu/dbCAN2/download/Databases/tf-1.hmm && hmmpress {output.tf1} && "
+      "wget -qO {output.tf2} http://bcb.unl.edu/dbCAN2/download/Databases/tf-2.hmm && hmmpress {output.tf2} && "
+      "wget -qO {output.stp} http://bcb.unl.edu/dbCAN2/download/Databases/stp.hmm && hmmpress {output.stp}")
+
+
+# Download tcdb files
+rule downloadtcdb:
+   version: "1.0"
+   output:
+      seqs = dbcan_fasta_files + "tcdb.fasta",
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message:
+      "Downloading TCDB FASTA file"
+   shell:
+      "wget -qO {output.seqs} http://bcb.unl.edu/dbCAN2/download/Databases/tcdb.fa"
+      
+
+# Download dbCANs HotPep
+rule downloaddbCAN2hotpep:
+   version: "1.0"
+   output:
+      directory(basedir_dbs + "/dbCAN2/Hotpep")
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message:
+      "Downloading HOTPEP"
+   shell:
+      "mkdir {output} && wget -qO- http://bcb.unl.edu/dbCAN2/download/Tools/hotpep-python-08-20-2019.tar.gz | tar -C {output}/.. -xzf -"
+
+
+rule dbcan_diamond_index:
+   version: "1.0"
+   input:
+      seqs = dbcan_fasta_files + "{db}.fasta"
+   params:
+      db = dbcan_fasta_files + "{db}"
+   output:
+      dbcan_fasta_files + "{db}.dmnd"
+   log:
+      dbcan_fasta_files + "{db}.dmnd.log"
+   benchmark:
+      basedir_bench + "/dbCAN2/diamond_{db}.tsv"
+   threads:
+      32
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message:
+      "Creating DIAMOND DB for {wildcards.db}"
+   shell:
+      "diamond makedb -p {threads} --db {params.db} --in {input.seqs} &> {log}"
+
+
+rule dbCANRefData:
+   version: "1.0"
+   input:
+      expand(dbcan_fasta_files + "{db}.dmnd", db=["CAZyDB", "tcdb"]),
+      basedir_dbs + "/dbCAN2/Hotpep",
+      expand(dbcan_hmmer_files + "{model}.hmm.h3i",model=["tf-1","tf-2","stp"]),
+      expand(dbcan_hmmer_files + "dbCAN-HMMdb.txt.h3i")
+   message:
+      "Created dbCAN data"
+
+
+# Run diamond on the bins
+dbcandiamonddbs_eval = {"CAZyDB":config["dbCAN_diamond_eval"], "tcdb":config["tcdb_diamond_eval"]}
+rule bindbCANDIAMOND:
+   version: "1.0"
+   input:
+      db = rules.dbcan_diamond_index.output,
+      query = chunk
+   params:
+      db = rules.dbcan_diamond_index.params.db,
+      evalue = lambda w: dbcandiamonddbs_eval[w.db]
+   output:
+      dbcan_tmpl + "{j}_dmnd_{db}.tsv"
+   log:
+      dbcan_tmpl + "{j}_dmnd_{db}.log"
+   benchmark:
+      expand(dbcan_benchmark, app="dmnd_blastp_{db}")[0]
+   threads:
+      8
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message:
+      "Running DIAMOND for {wildcards.bin} chunk {wildcards.j} on {wildcards.db}"
+   shell:
+      "diamond blastp --db {params.db} -k 1 --query {input.query} --out {output} --outfmt 6 --evalue {params.evalue} -p {threads} &> {log}"
+
+
+# Run hmmscan on the bins
+hmmdbs = {"cazy":rules.downloaddbCAN2hmmer.output.raw, "tf1":rules.downloadtfmodels.output.tf1, 
+          "tf2":rules.downloadtfmodels.output.tf2, "stp":rules.downloadtfmodels.output.stp}
+
+
+rule hmmscan:
+   version: "1.0"
+   input:
+      db = lambda w: hmmdbs[w.hmm],
+      query = chunk
+   output:
+      dbcan_tmpl + "{j}_hmmer_{hmm}.tsv"
+   log:
+      dbcan_tmpl + "{j}_hmmer_{hmm}.log"
+   benchmark:
+      expand(dbcan_benchmark, app="hmmer_{hmm}")[0]
+   conda:
+      "envs/oldhmmer.yml"
+   threads:
+      8
+   message:
+      "Running hmmscan for {wildcards.bin} chunk {wildcards.j} on {wildcards.hmm}"
+   shell:
+      "hmmscan --domtblout {output} --cpu {threads} -o /dev/null {input.db} {input.query}"
+
+
+rule copyHotPEP:
+   version: "1.0"
+   input:
+      rules.downloaddbCAN2hotpep.output
+   output:
+      directory(config["output_dir"] + "/dbCAN_HotPep")
+   message:
+      "Preparing HotPEP"
+   shell:
+      "cp -R {input} {output}/"
+
+
+# Run HotPEP for a bin
+rule hotpep:
+   version: "1.0"
+   input:
+      query = chunk,
+      hotpep = rules.copyHotPEP.output
+   params:
+      dir = config["output_dir"] + "/dbCAN_HotPep/{j}_{bin}",
+      reldir = "{j}_{bin}",
+      hits = config["hotpep_hits"], # 6
+      freq = config["hotpep_freq"] #2.6
+   output:
+      dbcan_tmpl + "{j}_hotpep.tsv"
+   log:
+      dbcan_tmpl + "{j}_hotpep.log"
+   benchmark:
+      expand(dbcan_benchmark, app="hotpep")[0]
+   conda:
+      "envs/KnuttBinAnno.yml"
+   threads:
+      8
+   message:
+      "Running HOTPEP for {wildcards.bin} chunk {wildcards.j}"
+   shell:
+      ("{{ mkdir -p {params.dir} && python ./scripts/HotPEPFASTAsplit.py {input.query} {threads} {params.dir} && "
+       "olddir=$(pwd) && cd {params.dir}/.. && "
+       "python train_many_organisms_many_families.py {params.reldir} {threads} {config[hotpep_hits]} {config[hotpep_freq]} && "
+       "cd $olddir && mv {params.dir}/Results/output.txt {output} && rm -r {params.dir} ; }} &> {log}"   )
+
+
+# Combine metadbCAN results
+rule combinedbCAN:
+   version: "1.0"
+   input:
+      rules.copyHotPEP.output,
+      diamond = expand(dbcan_tmpl + "{j}_dmnd_{db}.tsv", bin="{bin}", j="{j}", db="CAZyDB"),
+      diamond_ref = rules.downloadCAZYdb.output.tsv,
+      tcdb = expand(dbcan_tmpl + "{j}_dmnd_{db}.tsv", bin="{bin}", j="{j}", db="tcdb"),
+      tcdb_ref = rules.downloadtcdb.output.seqs,
+      hmmscan = expand(dbcan_tmpl + "{j}_hmmer_{hmm}.tsv", bin="{bin}", j="{j}", hmm="cazy"),
+      tf1hmmscan = expand(dbcan_tmpl + "{j}_hmmer_{hmm}.tsv", bin="{bin}", j="{j}", hmm="tf1"),
+      tf2hmmscan = expand(dbcan_tmpl + "{j}_hmmer_{hmm}.tsv", bin="{bin}", j="{j}", hmm="tf2"),
+      stphmmscan = expand(dbcan_tmpl + "{j}_hmmer_{hmm}.tsv", bin="{bin}", j="{j}", hmm="stp"),
+      hotpep = rules.hotpep.output,
+      so = rules.downloadso.output,
+      query = chunk
+   params:
+      hotpepref = rules.copyHotPEP.output,
+      hmmscaneval = config["cazy_hmmscan_eval"],
+      hmmscancov = config["cazy_hmmscan_cov"],
+      stp_hmmscaneval = config["stp_hmmscan_eval"],
+      stp_hmmscancov = config["stp_hmmscan_cov"],
+      tf_hmmscaneval = config["tf_hmmscan_eval"],
+      tf_hmmscancov = config["tf_hmmscan_cov"],
+   output:
+      dbcan_tmpl + "{j}_all.tsv"
+   benchmark:
+      expand(dbcan_benchmark, app="combine")[0]
+   conda:
+      "envs/R.yml"
+   message:
+      "Combining dbCAN results for {wildcards.bin} chunk {wildcards.j}"
+   script:
+      "scripts/dbCAN.R"
+
+
+# Combine the chunk files
+rule dbcanchunkconcat:
+   version: "1.0"
+   input:
+      expand(dbcan_tmpl + "{j}_all.tsv",bin="{bin}", j=chunk_numbers)
+   output:
+      dbcan_tmpl + "all.tsv"
+   message:
+      "Combining dbCAN chunk data for {wildcards.bin}"
+   shell:
+      concatwithheader
+
+
+# Run cgc finder reimplement
+rule cgcfinder:
+   version: "1.0"
+   input:
+      dbcan = rules.dbcanchunkconcat.output,
+      query = rules.split_genes.input
+   params:
+      spacersig = config["dbcan_cgc_maxnotdbcangenespacers"] # 1
+   output:
+      dbcan_tmpl + "cgc.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Running CGC finder for {wildcards.bin}"
+   script:
+      "scripts/dbCAN-CGCFinder.R"
+
+
+# Combine these files
+rule dbCAN:
+   version: "1.0"
+   input:
+      expand(dbcan_tmpl + "all.tsv", bin=bins),
+      expand(dbcan_tmpl + "cgc.tsv", bin=bins)
+   message:
+      "Ran dbCAN"
+
+
+# Create assembly report
+rule dbCANReport:
+   version: "1.0"
+   input:
+      dbcan = expand(dbcan_tmpl + "all.tsv", bin=bins),
+      cgc = expand(dbcan_tmpl + "cgc.tsv", bin=bins),
+      cds = expand(metaerg_tmpl + "/data/cds.faa", bin=bins),
+      commons = "scripts/Reports/commonReport.R",
+   params:
+      bins = bins
+   output:
+      basedir_reporting + "/dbcan.html"
+   benchmark:
+      basedir_bench + "/dbcan_report.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Created dbCAN report"
+   script:
+      "scripts/Reports/binanno_dbCAN.Rmd"
+
+
+##
+## Interpro
+##
+
+
+
+# Download InterProScan
+interproscanversion = "5.40-77.0"   
+pantherversion = "14.1"
+
+rule interProRefData:
+   version: "1.0"
+   params:
+      url = "ftp://ftp.ebi.ac.uk/pub/software/unix/iprscan/5/" + interproscanversion + "/interproscan-" + interproscanversion + "-64-bit.tar.gz",
+      targetdir = basedir_dbs,
+      pantherurl="ftp://ftp.ebi.ac.uk/pub/software/unix/iprscan/5/data/panther-data-" + pantherversion + ".tar.gz"
+   output:
+      directory(basedir_dbs + "/interproscan-" + interproscanversion)
+   message:
+      "Downloading InterProScan"
+   shell:
+      "wget -qO- {params.url} | tar -C {params.targetdir} -xzf - && wget -qO- {params.pantherurl} | tar -C {output}/data -pxzf -"
+
+# Run interproscan on one bin
+rule interproscanbin:
+   version: "1.0"
+   input:
+      query = chunk,
+      install = rules.interProRefData.output
+   params:
+      outbase = iprscan_tmp + "_{j}"
+   output:
+      iprscan_tmp + "_{j}.tsv"
+   log:
+      iprscan_tmp + "_{j}.log"
+   benchmark:
+      basedir_bench + "/InterProScan/InterProScan_{bin}_{j}.tsv"
+   threads:
+      8
+   conda:
+      "envs/interproscan.yml"
+   message:
+      "Running InterProScan on {wildcards.bin} chunk {wildcards.j}"
+   shell:
+      "{input.install}/interproscan.sh --cpu {threads} -ms {config[min_orflen]} -b {params.outbase} -T $(mktemp -d) -f TSV -goterms -i {input.query} -pa -t p &> {log}"
+
+
+# Combine chunk data
+rule interprochunkconcat:
+   version: "1.0"
+   input:
+      expand(iprscan_tmp + "_{j}.tsv", bin="{bin}", j=chunk_numbers)
+   output:
+      iprscan_tmp + ".tsv"
+   message:
+      "Combining InterProScan tsv chunk results for {wildcards.bin}"
+   shell:
+      "echo 'seqid\tmd5\tlen\tanalysis\tsigacc\tsigdescr\tstart\tstop\tscore\tstatus\tdate\tinterpro\tinterprodescr\tGO\tpathways' > {output} && cat {input} >> {output}"
+
+rule interprogff:
+   version: "1.0"
+   input:
+      dat = rules.interprochunkconcat.output,
+      so = rules.downloadso.output,
+   output:
+      iprscan_tmp + "_gffbase.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Creating GFF base file from InterProScan for {wildcards.bin}"
+   script:
+      "scripts/interpro2gff.R"
+
+rule interPro:
+   version: "1.0"
+   input:
+      expand(iprscan_tmp + "_gffbase.tsv", bin=bins)
+   message:
+      "Ran InterProScan for all bins"
+
+
+rule interProReport:
+   version: "1.0"
+   input:
+      ipr = expand(iprscan_tmp + ".tsv", bin=bins),
+      cds = expand(metaerg_tmpl + "/data/cds.faa", bin=bins),
+      commons = "scripts/Reports/commonReport.R",
+   params:
+      bins = bins
+   output:
+      basedir_reporting + "/interpro.html"
+   benchmark:
+      basedir_bench + "/interpro_report.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Created InterProScan report"
+   script:
+      "scripts/Reports/binanno_interpro.Rmd"
+
+
+##
+## eggNOG mapper
+##
+
+
+# Download eggnogmapper data
+rule eggNOGRefData:
+   version: "1.0"
+   params:
+      dir = basedir_dbs + "/eggNOG"
+   output:
+      expand(basedir_dbs + "/eggNOG/data/{file}", file=["eggnog.db", "eggnog_proteins.dmnd"]),
+      directory(basedir_dbs + "/eggNOG/eggnog-mapper"),
+   log:
+      basedir_dbs + "/eggNOG.log"
+   conda:
+      "envs/metaerg.yml"
+   message:
+      "Downloading eggNOG Mapper data"
+   shell:
+      "{{ git clone --branch 2.0.1 https://github.com/eggnogdb/eggnog-mapper.git {params.dir}/eggnog-mapper && {params.dir}/eggnog-mapper/download_eggnog_data.py -f -y --data_dir {params.dir}/data ; }} &> {log}"
+
+
+# Run eggnog-mapper on one bin
+rule eggnogmapbin:
+   version: "1.0"
+   input:
+      rules.eggNOGRefData.output,
+      query = chunk
+   params:
+      base =  eggnog_tmp + "_{j}",
+      dir = rules.eggNOGRefData.params.dir
+   output:
+      seedorthologs = eggnog_tmp + "_{j}.emapper.seed_orthologs",
+      annotations = eggnog_tmp + "_{j}.emapper.annotations"
+   log:
+      eggnog_tmp + "_{j}.emapper.log"
+   benchmark:
+      basedir_bench + "/eggNOG/eggNOG_{bin}_{j}.tsv"
+   conda:
+      "envs/metaerg.yml"
+   threads:
+      8
+   message:
+      "Running eggNOG mapper on {wildcards.bin} chunk {wildcards.j}"
+   shell:
+      "{params.dir}/eggnog-mapper/emapper.py --seed_ortholog_evalue {config[eggnog_eval]} --seed_ortholog_score {config[eggnog_minscore]} --target_orthologs all --data_dir {params.dir}/data -m diamond -i {input.query} --cpu {threads} -o {params.base} &> {log}"
+
+
+# Create prot gff from eggnog
+rule eggnoggff:
+   version: "1.0"
+   input:
+      anno = rules.eggnogmapbin.output.annotations,
+      query = chunk,
+      so = rules.downloadso.output,
+   output:
+      eggnog_tmp + "_{j}.emapper.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Creating eggNOG GFF base files for {wildcards.bin} chunk {wildcards.j}"
+   script:
+      "scripts/eggnog2gff.R"
+
+# Combine chunk data
+rule eggnogchunkconcat:
+   version: "1.0"
+   input:
+      expand(eggnog_tmp + "_{j}.emapper.tsv", bin="{bin}", j=chunk_numbers)
+   output:
+      eggnog_tmp + ".tsv"
+   message:
+      "Combining eggNOG chunk results for {wildcards.bin}"
+   shell:
+      concatwithheader
+
+rule eggNOG:
+   version: "1.0"
+   input:
+      expand(eggnog_tmp + ".tsv", bin=bins)
+   message:
+      "Ran eggNOG mapper"
+
+
+# Eggnog report
+rule eggNOGReport:
+   input:
+      eggnog = expand(eggnog_tmp + ".tsv", bin=bins),
+      cds = expand(metaerg_tmpl + "/data/cds.faa", bin=bins),
+      commons = "scripts/Reports/commonReport.R",
+   params:
+      bins = bins
+   output:
+      basedir_reporting + "/eggnog.html"
+   benchmark:
+      basedir_bench + "/eggnog_report.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Produced eggNOG mapper report"
+   script:
+      "scripts/Reports/binanno_eggnog.Rmd"
+
+
+##
+## kofamKOALA
+##
+
+
+# Download kofamkoala and kofamscan
+rule kofamRefData:
+   version: "1.0"
+   params:
+      dir = basedir_dbs + "/KofamKOALA/"
+   output:
+      kolist = basedir_dbs + "/KofamKOALA/ko_list",
+      profiles = directory(basedir_dbs + "/KofamKOALA/profiles")
+   conda:
+      "envs/KnuttBinAnno.yml"
+   message:
+      "Downloading KofamKOALA"
+   shell:
+      ("wget -qO- ftp://ftp.genome.jp/pub/db/kofam/ko_list.gz | gunzip > {output.kolist} && "
+      "wget -qO- ftp://ftp.genome.jp/pub/db/kofam/profiles.tar.gz | tar -xzf - -C {params.dir}" )
+
+
+# Execute kofamkoala
+rule kofamkoalabin:
+   version: "1.0"
+   input:
+      kolist = rules.kofamRefData.output.kolist,
+      profiles = rules.kofamRefData.output.profiles,
+      query = chunk
+   output:
+      kofam_tmp + "_{j}.tsv"
+   log:
+      kofam_tmp + "_{j}.log"
+   benchmark:
+      basedir_bench + "/KofamKOALA/KofamKOALA_{bin}_{j}.tsv"
+   conda:
+      "envs/KnuttBinAnno.yml"
+   threads:
+      8
+   message: 
+      "Running KofamKOALA on {wildcards.bin} chunk {wildcards.j}"
+   shell:
+      "tmpd=$(mktemp -d)  && exec_annotation -o {output} -p {input.profiles} -k {input.kolist} --cpu={threads} {input.query} --tmp-dir $tmpd &> {log} && rm -r $tmpd"
+
+
+# Combine chunk data
+rule kofamkoalachunkconcat:
+   version: "1.0"
+   input:
+      expand(kofam_tmp + "_{j}.tsv", bin="{bin}", j=chunk_numbers)
+   output:
+      kofam_tmp + ".tsv"
+   message:
+      "Combining KofamKOALA chunk results for {wildcards.bin}"
+   shell:
+      "awk 'FNR > 2' {input} | sed -r 's/(\\*| ) (\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(.+)/\\1\t\\2\t\\3\t\\4\t\\5\t\\6\t\\7/g' | sed -e 's/^\\*/true/g' -e 's/^ /false/g' -e '1ihit\tseqid\tKO\tthrshld\tscore\teval\tdescr' > {output}"
+
+
+# Create prot tsv and ko map from kofam
+rule kofamgff:
+   version: "1.0"
+   input:
+      kofam = rules.kofamkoalachunkconcat.output,
+      query = rules.split_genes.input,
+      so = rules.downloadso.output,
+   params:
+      ifunsure_eval = config["kofam_helper_eval"],
+   output:
+      gffbase = kofam_tmp + "_gffbase.tsv",
+      kos = kofam_tmp + "_kos_all.tsv",
+      kos_onlysure = kofam_tmp + "_kos_sure.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Creating GFF base file from KofamKOALA for {wildcards.bin}"
+   script:
+      "scripts/kofam2gff.R"
+
+
+# Find modules
+rule kofammodules:
+   version: "1.0"
+   input:
+      kofam_tmp + "_kos_{type}.tsv",
+   wildcard_constraints:
+      type = "all|sure"
+   output:
+      kofam_tmp + "_kos_{type}_modules.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Searching for KEGG modules in {wildcards.bin}, using {wildcards.type} KOs"
+   script:
+      "scripts/KOAnalyze.R"
+
+
+rule kofam:
+   version: "1.0"
+   input:
+      expand(kofam_tmp + "_kos_{type}_modules.tsv", type=("all","sure"), bin=bins)
+   message:
+      "Ran KofamKOAlA and module search for all bins"
+
+#
+# Kofam report
+#
+rule kofamReport:
+   input:
+      kofam = expand(kofam_tmp + "_kos_all_modules.tsv", bin=bins),
+      cds = expand(metaerg_tmpl + "/data/cds.faa", bin=bins),
+   params:
+      bins = bins
+   output:
+      basedir_reporting + "/kofam.html"
+   benchmark:
+      basedir_bench + "/kofam_report.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Produced KofamKOALA report"
+   script:
+      "scripts/Reports/binanno_kofam.Rmd"
+
+
+##
+## HydDB
+##
+
+
+# Create RPS blast db for hyddb filtering
+rule hydDBRefData:
+   version: "1.0"
+   params:
+      dir = basedir_dbs + "/HydDBClient"
+   output:
+      expand(basedir_dbs + "/HydDBClient/hyd.{ext}", ext=["aux","freq","pin","loo","rps"])
+   log:
+      basedir_dbs + "/HydDBClient.log"
+   conda:
+      "envs/hyddbclient.yml"
+   message:
+      "Creating RPS BLAST database files for HydDB"
+   shell:
+      "python3 scripts/hyddbclient/createHydRPSdb.py {params.dir} &> {log}"
+
+
+# Analyze hydrogenases
+rule hyddbsample:
+   version: "1.0"
+   input:
+      rules.hydDBRefData.output,
+      cds = rules.split_genes.input,
+   params:
+      dbdir = rules.hydDBRefData.params.dir,
+      eval = 10E-10
+   output:
+      hyddb_tmp + ".tsv"
+   log:
+      hyddb_tmp + ".log"
+   conda:
+      "envs/hyddbclient.yml"
+   message:
+      "Running HydDB search for {wildcards.bin}"
+   shell:
+      "python3 scripts/hyddbclient/hyddbsubmit.py -o {output} -l {log} -f {params.dbdir} -e {params.eval} {input.cds}"
+
+rule hyddbgff:
+   version: "1.0"
+   input:
+      dat = rules.hyddbsample.output,
+      so = rules.downloadso.output,
+   output:
+      hyddb_tmp + "_gffbase.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Creating GFF base file from HydDB for {wildcards.bin}"
+   script:
+      "scripts/hyddb2gff.R"
+
+rule hydDB:
+   version: "1.0"
+   input:
+      expand(hyddb_tmp + "_gffbase.tsv", bin=bins),
+   message:
+      "Ran HydDB search"
+
+# hyddb report
+rule hydDBReport:
+   version: "1.0"
+   input:
+      hyddb = expand(hyddb_tmp + ".tsv", bin=bins),
+      cds = expand(metaerg_tmpl + "/data/cds.faa", bin=bins),
+      commons = "scripts/Reports/commonReport.R",
+   params:
+      bins = bins
+   output:
+      basedir_reporting + "/hyddb.html"
+   benchmark:
+      basedir_bench + "/hyddb_report.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Produced HydDB report"
+   script:
+      "scripts/Reports/binanno_hyddb.Rmd"
+
+reportfiles = {"dbcan":rules.dbCANReport.output, "interpro":rules.interProReport.output, "eggnog":rules.eggNOGReport.output, 
+               "hyddb":rules.hydDBReport.output}
+reportfiles = [reportfiles[tool][0] for tool in config["all"] if tool!="kofam"] 
+
+dbfiles = {"dbcan":rules.dbCANRefData.input, "interpro":rules.interProRefData.input, "eggnog":rules.eggNOGRefData.output, 
+               "kofam":rules.kofamRefData.output, "hyddb":rules.hydDBRefData.output}
+dbfiles = [f for tool in config["all"] for f in dbfiles[tool]] 
+
+allfiles = {"dbcan":rules.dbcanchunkconcat.output, "interpro":rules.interprogff.output, "eggnog":rules.eggnogchunkconcat.output, 
+               "kofam":[rules.kofamgff.output[0]], "hyddb":rules.hyddbgff.output}
+allfiles = [allfiles[tool][0] for tool in config["all"]] 
+
+rule allgff:
+   version: "1.0"
+   input:
+      gffs = allfiles,
+      cds = rules.metaergsample.output.cds,
+      so = rules.downloadso.output,
+   output:
+      gff = config["output_dir"] + "/Combined/{bin}.gff",
+      tsv = config["output_dir"] + "/Combined/{bin}.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Combining results into final GFF for {wildcards.bin}"
+   script:
+      "scripts/all2gff.R"
+
+
+rule all:
+   version: "1.0"
+   input:
+      expand(config["output_dir"] + "/Combined/{bin}.gff", bin=bins)
+   message:
+      "Finished annotating!"
+
+
+rule allRefData:
+   version: "1.0"
+   input:
+      dbfiles
+   message:
+      "Produced reference files"
+
+rule allReport:
+   version: "1.0"
+   input:
+      reportfiles
+   message:
+      "Produced all configured reports"

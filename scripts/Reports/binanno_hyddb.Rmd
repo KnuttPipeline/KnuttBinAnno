@@ -1,0 +1,120 @@
+---
+title: "HydDB Annotation"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    theme: sandstone
+---
+
+```{r, include=FALSE}
+#save.image()
+hyddbres.file <- snakemake@input[["hyddb"]]
+cds.file <- snakemake@input[["cds"]]
+commonscript.file <- snakemake@input[["commons"]]
+threads <- snakemake@threads
+bins <- data.frame(bin=snakemake@params$bins)
+#taxcols=c("superkingdom","phylum","class","order","family","genus","species")
+files <- unlist(c(hyddbres.file,cds.file))
+source(commonscript.file)
+suppressPackageStartupMessages(library(viridis))
+commonOptions(threads)
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(scales))
+
+hyddbres <- readData(hyddbres.file, bins)
+setnames(hyddbres,c("query"),c("cds"),skip_absent = T)
+
+cdsdat <- readData(cds.file,bins,readCDS)
+
+hyddbres[grepl("\\[.+\\].+",Classification),Classification_Center:=sub("\\[(.+)\\].+","\\1",Classification)]
+hyddbres[Classification=="NONHYDROGENASE",Classification_Center:="Rejected"]
+hyddbres <- hyddbres[cdsdat,on="cds"]
+```
+
+# Overview
+
+## Row
+
+### Application Note
+
+Kofam notes here
+
+> Rendered at: `r Sys.time()`.
+
+## Row
+
+### File Note
+
+```{r}
+knitr::kable(genInfoBlock(files))
+```
+> The table shows the files which have been used to generate this report.
+
+
+## Row
+
+### CDS annotated
+
+```{r}
+hyddbrescounts = hyddbres[,.(N=length(unique(cds))),by=c("bin","Classification_Center")]
+hyddbrescounts[,rel:=N/sum(N)*100,by="bin"]
+hyddbrescounts = hyddbrescounts[!is.na(Classification_Center)]
+
+ggplotly(ggplot(hyddbrescounts) + aes(x=bin,y=rel,fill=Classification_Center) + geom_bar(stat="identity",position="stack") + labs(x="Bin",fill="Classification",y="Of all CDS") + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the CDS were annotated.  Rejected entries contained a RPS hit, but HydDB didn't classify them.
+
+### Contigs annotated
+
+```{r}
+contigcounts = unique(hyddbres[,.(bin,cid,cds,subject)])
+contigcounts = contigcounts[,.(rel=sum(!is.na(subject))/.N*100),by=c("bin","cid")]
+ggplotly(ggplot(contigcounts) + aes(x=rel,color=bin) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="Bin",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the contigs contains a annotation?
+
+## Row
+
+### Score Distribution
+
+```{r}
+ggplotly(ggplot(hyddbres[!is.na(score)&score!=".",.(score=log10(as.numeric(eval)+1),bin)]) + aes(x=score, color=bin) + geom_density(trim=T) + labs(x="log10(eval+1)",y="Density estimate",color="Bin"))
+```
+
+> The distribution of the log10(e-values+1).
+
+## Row 
+
+### Model Hits
+
+```{r,results="asis"}
+hyddbrescounts = hyddbres[!is.na(subject),.(.N),by=c("bin","center","shortname","Classification_Center")]
+hyddbrescounts[,rel:=N/sum(N)*100,by="bin"]
+hyddbrescounts[,shortname:=paste0(center,":",shortname)]
+hyddbrescounts=split(hyddbrescounts,hyddbrescounts$Classification_Center)
+
+plots=lapply(hyddbrescounts,function(x)ggplotly(ggplot(x) + aes(x=bin,y=rel,fill=shortname) + geom_bar(stat="identity",position="stack") + labs(x="Bin",fill="Model",y="Of all Hits") + scale_y_continuous(labels = function(x) paste0(x, "%"))))
+for(pname in names(plots)){
+  drawplotasis(pname,"The Classification by HydDB and the models that identified that protein.",plots[[pname]])
+}
+```
+
+## Row
+
+### Bin Comparison
+
+```{r}
+dat=hyddbres[!is.na(Classification),.N,by=c("bin","Classification")]
+dat[,rel:=N/sum(N)*100,by=c("bin")]
+dat=as.data.table(complete(dat,bin,Classification,fill=list(N=0,rel=0)))
+orderHeatMap(dat,"bin",field = "rel",grouping = "Classification")
+orderHeatMap(dat,"Classification",field = "rel",grouping = "bin")
+ggplotly(ggplot(dat)+aes_string(x="bin",y="Classification",fill="rel") +labs(fill="% of Hits")+ geom_raster() + xlab("Bin") + ylab("Predicted")+theme(axis.text.x = element_text(angle = 33)))
+```
+
+> The distribution of the HydDB hydrogenase classes.
+
+

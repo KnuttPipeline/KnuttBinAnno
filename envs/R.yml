@@ -4,19 +4,22 @@ channels:
   - bioconda
   - genomedk
 dependencies:
-  - r-igraph=1.2.4.2
-  - r-data.table=1.12.6
+  - r-igraph=1.2.5
+  - r-data.table=1.12.8
   - r-pbapply=1.4_2
-  - bioconductor-shortread=1.40.0
-  - bioconductor-biostrings=2.50.2
-  # Newer plotly version break multi tab rendering (sometimes!)
-  - r-plotly=4.8.0
-  - r-matrixstats=0.55.0
+  - bioconductor-shortread=1.44.0
+  - bioconductor-biostrings=2.54.0
+  - r-plotly=4.9.2.1
+  - r-matrixstats=0.56.0
   - r-stringr=1.4.0
-  - r-dt=0.11
+  - r-dt=0.13
   - r-tidyr=1.0.2
-  - r-knitr=1.27
+  - r-knitr=1.28
   - r-rmarkdown=2.1
   - r-flexdashboard=0.5.1.1
   - r-seqinr=3.6_1
-  - bioconductor-keggrest=1.22.0
+  - bioconductor-keggrest=1.26.0
+  - r-ontologyIndex=2.5
+  - r-viridis=0.5.1
+  - bioconductor-GOSemSim=2.12.0
+  - bioconductor-GO.db=3.10.0

@@ -1,0 +1,121 @@
+---
+title: "EggNOG Annotation"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    theme: sandstone
+---
+
+```{r, include=FALSE}
+eggnogres.file <- snakemake@input[["eggnog"]]
+cds.file <- snakemake@input[["cds"]]
+commonscript.file <- snakemake@input[["commons"]]
+threads <- snakemake@threads
+bins <- data.frame(bin=snakemake@params$bins)
+#taxcols=c("superkingdom","phylum","class","order","family","genus","species")
+files <- unlist(c(eggnogres.file,cds.file))
+source(commonscript.file)
+suppressPackageStartupMessages(library(viridis))
+suppressPackageStartupMessages(library(GOSemSim))
+suppressPackageStartupMessages(library(GO.db))
+commonOptions(threads)
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(KEGGREST))
+source("scripts/commonGFF3Tools.R")
+
+eggnogres <- readData(eggnogres.file, bins, readfun=function(...)readBaseGFF(fread(..., fill = T)))
+setnames(eggnogres,c("seqid","GOs"),c("cds","GO"),skip_absent = T)
+cdsdat <- readData(cds.file, bins, readfun=readCDS)
+eggnogres <- eggnogres[cdsdat,on=c("cds","bin")]
+
+```
+
+# Overview
+
+## Row
+
+### Application Note
+
+EggNOG is a database with automatically derived gene ortholog phylogeny-aware families. They map to different databases like KEGG, GO, CAZy, COG and BiGG Reaction. Mapping was done with the EggNOGmapper, which uses seeds generated from the orthologs to assign the CDS. As the GO terms (InterProScan), CAZy (metadbCAN) and KOs (KOfamKOALA) are already generated from other tools, they went unused.
+
+> Rendered at: `r Sys.time()`.
+
+## Row
+
+### File Note
+
+```{r}
+knitr::kable(genInfoBlock(files))
+```
+> The table shows the files which have been used to generate this report.
+
+
+## Row
+
+### CDS annotated
+
+```{r}
+eggnogres[,tax_scope:=sub("^eggNOG\\|(.+)\\|.+","\\1",target)]
+eggnoggcounts <- eggnogres[,.N,by=c("bin","tax_scope")]
+eggnoggcounts[,rel:=N/sum(N)*100,by="bin"]
+eggnoggcounts <- eggnoggcounts[!is.na(tax_scope)]
+ggplotly(ggplot(eggnoggcounts) + aes(x=bin,y=rel,fill=tax_scope) + geom_bar(stat="identity",position="stack") + labs(x="Bin",fill="Tax. Scope",y="Of all CDS") + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the CDS were annotated. 
+
+### Contigs annotated
+
+```{r}
+contigcounts <- eggnogres[,.(rel=sum(!is.na(tax_scope))/.N*100),by=c("bin","cid")]
+ggplotly(ggplot(contigcounts) + aes(x=rel,color=bin) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="Bin",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the contigs contains a annotation?
+
+
+## Row
+
+### Best taxanomic level for the bins
+
+```{r}
+taxcounts <- eggnogres[,.N,by=c("bin","tax")]
+taxcounts[,rel:=N/sum(N)*100,by=c("bin")]
+taxcounts <- taxcounts[!is.na(tax)]
+ggplotly(ggplot(taxcounts) + aes(x=bin,y=rel,fill=tax) + geom_bar(stat="identity",position="stack") + labs(x="Bin",fill="Tax.",y="Of bin") + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> The taxanomic assignment by EggNOG mapper.
+
+## Row
+
+### BiGG Models
+
+```{r}
+if("BiGG_Reaction" %in% colnames(eggnogres)){
+  biggmodels=eggnogres[BiGG_Reaction!="",.(bin,BiGG_Reaction=strsplit(BiGG_Reaction,",",T))]
+  biggmodels = as.data.table(unnest(as_tibble(biggmodels),BiGG_Reaction))
+  biggmodels[,c("model","gene"):=tstrsplit(BiGG_Reaction,".",fixed=T)]
+  biggmodels = biggmodels[,.(N=length(unique(gene))),by=c(bin,"model")]
+  getModelInfo <- function(model){
+    require(rjson)
+    url=sprintf("http://bigg.ucsd.edu/api/v2/models/%s",model)
+    fromJSON(file=url)
+  }
+  biggmodels[,c("Organism","Model Gene Count"):=getModelInfo(model)[c("organism","gene_count")],by="model"]
+  biggmodels[,model:=paste0("<a href=\"http://bigg.ucsd.edu/models/",model,"\">",model,"</a>")]
+  setnames(biggmodels,c("bin","model","N"),c("Sample","Model","Hit Genes Count"))
+  datatable(biggmodels,escape = F)
+}
+```
+
+> BiGG Models is a collection of genome-scale metabolic network reconstructions in the COBRA format for metabolic simulations.
+
+### Score Distribution
+
+```{r}
+ggplotly(ggplot(eggnogres[!is.na(score)]) + aes(x=score,color=bin)+ geom_density(trim=T) + labs(x="Seed Hit Score",y="Density estimate",color="bBin"))
+```
+
+> The distribution of the seed hit score. The estimate has been trimmed.

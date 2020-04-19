@@ -1,0 +1,155 @@
+---
+title: "Kofam KOALA Annotation"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    theme: sandstone
+---
+
+```{r, include=FALSE}
+#save.image()
+kofamres.file <- snakemake@input[["kofam"]]
+cds.file <- snakemake@input[["cds"]]
+commonscript.file <- snakemake@input[["commons"]]
+threads <- snakemake@threads
+bins <- data.frame(bin=snakemake@params$bins)
+#taxcols=c("superkingdom","phylum","class","order","family","genus","species")
+files <- unlist(c(kofamres.file,cds.file))
+source("scripts/Reports/commonReport.R")
+suppressPackageStartupMessages(library(viridis))
+commonOptions(threads)
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(KEGGREST))
+suppressPackageStartupMessages(library(scales))
+source("scripts/commonGFF3Tools.R")
+
+kofamres <- readData(kofamres.file, bins)
+setnames(kofamres,c("seqid"),c("cds"),skip_absent = T)
+kofamres[,source:=sub("^[^-]+-(.+)$","\\1",source)]
+cdsdat <- readData(cds.file, bins, readfun=readCDS)
+kofamres <- kofamres[cdsdat,on=c("cds","bin")]
+kofamres <- kofamres[cdsdat,on="cds"]
+
+```
+
+# Overview
+
+## Row
+
+### Application Note
+
+Kofam notes here
+
+> Rendered at: `r Sys.time()`.
+
+## Row
+
+### File Note
+
+```{r}
+knitr::kable(genInfoBlock(files))
+```
+> The table shows the files which have been used to generate this report.
+
+
+## Row
+
+### CDS annotated
+
+```{r}
+kofamrescounts = kofamres[,.(N=length(unique(cds))),by=c("sample","source")]
+kofamrescounts[,rel:=N/sum(N)*100,by="sample"]
+kofamrescounts = kofamrescounts[!is.na(source)]
+
+kofamrescounts[source=="sure",source:="Threshold met"]
+kofamrescounts[source=="unsure-eval-sel",source:="No threshold\navailable, E-Value\nselected"]
+
+ggplotly(ggplot(kofamrescounts) + aes(x=sample,y=rel,fill=source) + geom_bar(stat="identity",position="stack") + labs(x="Sample",fill="Source",y="Of all CDS") + scale_y_continuous(labels = function(x) paste0(x, "%")))
+```
+
+> Which percentage of the CDS were annotated. 
+
+### Contigs annotated
+
+```{r}
+contigcounts = unique(kofamres[,.(sample,cid,cds,source)])
+contigcounts = contigcounts[,.(rel=sum(!is.na(source))/.N*100),by=c("sample","cid")]
+ggplotly(ggplot(contigcounts) + aes(x=rel,color=sample) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="Sample",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")) + scale_color_brewer(palette = sample_palette))
+```
+
+> Which percentage of the contigs contains a annotation?
+
+
+### Score Distribution
+
+```{r}
+ggplotly(ggplot(kofamres[!is.na(score)&score!=".",.(score=log10(as.numeric(score)+1),sample)]) + aes(x=score,color=sample) + scale_color_brewer(palette = sample_palette) + geom_density(trim=T) + labs(x="log(eval+1)",y="Density estimate",color="Sample"))
+```
+
+> The distribution of the log10(e-values+1).
+
+## Row
+
+### KEGG Pathways (Samples)
+
+```{r}
+
+maps=unlist(lapply(unique(kofamres[!is.na(Ontology_term),Ontology_term]),function(x)tryCatch(keggLink("pathway",x), error = function(e)e)))
+
+
+
+
+mapselector=sapply(sapply(maps,"[[","NAME"),length)!=0
+maps=maps[mapselector]
+maps_look=data.table(map=unique(keggpathways$map)[mapselector],map_name=sapply(maps,"[[","NAME"),map_class=sapply(maps,"[[","CLASS"))
+keggpathways = keggpathways[maps_look,on="map"]
+keggpathways[,map:=paste0("ec",map)]
+keggpathways[,c("category","class"):=tstrsplit(map_class,";",fixed=T)]
+keggpathways[,map_class:=NULL]
+samplemaps = keggpathways[,.(Hits=.N,query=paste0("<a href=\"https://www.genome.jp/kegg-bin/show_pathway?",map[[1]],"+",paste0(ecs,collapse="+"),"\">",map[[1]],"</a>")),by=c("sample","category","class","map_name")]
+
+setnames(samplemaps,c("sample","category","class","map_name","query"),c("Sample","Category","Class","Pathway","Link"))
+datatable(samplemaps,escape = F)
+```
+
+> The KEGG Pathways annotated (sample wise)
+
+### KEGG Pathways (Bins)
+
+```{r}
+binmaps = keggpathways[,.(Hits=.N,query=paste0("<a href=\"https://www.genome.jp/kegg-bin/show_pathway?",map[[1]],"+",paste0(ecs,collapse="+"),"\">",map[[1]],"</a>")),by=c("sample","bin","category","class","map_name")]
+
+setnames(binmaps,c("sample","bin","category","class","map_name","query"),c("Sample","Bin","Category","Class","Pathway","Link"))
+datatable(binmaps,escape = F)
+```
+
+> The KEGG Pathways annotated (bin wise)
+
+
+```{r,eval=F,include=F}
+binCount <- function(binvector){
+  binvector = unique(binvector)
+  if(length(binvector)==1&&binvector=="unbinned")
+    return(-1.0)
+  else
+    return(as.double(length(binvector)))
+}
+
+ecs2ko = unique(keggpathways$ecs)
+ecs2ko = 
+
+keggpathways_view = dcast(keggpathways,sample~ecs,value.var = "bin",fun.aggregate = binCount)
+keggpathways_view = as.data.frame(keggpathways_view)
+rownames(keggpathways_view) = keggpathways_view$sample
+keggpathways_view$sample=NULL
+keggpathways_view=t(keggpathways_view)
+
+tmpdir=tempfile()
+dir.create(tmpdir)
+function(ecs,maps){
+  pathview(keggpathways_view,pathway.id = keggpathways[is.na(map_name),map],species="ko",kegg.dir = tmpdir,gene.idtype="KEGG",dsicrete=list(gene=T, cpd=FALSE))
+
+}
+unlink(tmpdir,recursive = T)
+```

@@ -175,7 +175,7 @@ def main(args,logfile,outfile):
 	lprint("Running RPS ...")
 	data = callRPS(args.input,args.rpseval,args.dbdir,args.db_name,logfile)
 	#print(data)
-	if(not data):
+	if(data.empty):
 		_ = outfile.write("query	subject	identity	allength	mismatches	gapopenings	querystart	queryend	subjectstart	subjectend	eval	score	center	shortname	name	subjectlength	hitid	Classification\n")
 		return
 	lprint(f"{len(data.index)}  Hit(s)!")
