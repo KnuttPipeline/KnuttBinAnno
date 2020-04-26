@@ -27,8 +27,8 @@ with open(args.inputFile, 'r') as f:
          if num_genes > count_per_file and num_files != numThreads:
             out.close()
             num_files += 1
-            num_genes = 0
+            num_genes = 1
             out.close()
             out = open(os.path.join(directory,"orfs%s.txt" % (str(num_files))), 'w')
+         print(f"File: {num_files} Gene: {num_genes}")
       out.write(line)
-
