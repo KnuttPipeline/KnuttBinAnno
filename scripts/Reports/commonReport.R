@@ -24,9 +24,6 @@ commonOptions  <- function(threads){
     setDTthreads(threads)
     options(mc.cores = threads)
     theme_set(theme_linedraw())
-    sample_palette <<- "Set1"
-    read_palette <<- "Set2"
-    additional_palette <<- "Set3"
     knitr::opts_chunk$set(fig.height=7) 
 }
 

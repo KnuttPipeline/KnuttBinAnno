@@ -85,8 +85,8 @@ read.hmm <- function(file,feval,fcov){
 }
 hmmscan <- read.hmm(hmmscan.path,hmmscan.eval,hmmscan.coverage)
 hmmscan[,basename:=gsub("(.+)\\.p?hmm","\\1",HMMProfile)]
-hmmscan[grepl(hmmscan.regex,basename),CAZyFamily:=strsplit(sub(hmmscan.regex,"\\1\\2",basename),",",fixed=T)]
-hmmscan[!grepl(hmmscan.regex,basename),CAZyFamily:=strsplit("",",",fixed=T)]
+hmmscan[grepl(hmmscan.regex,basename),CAZyFamily:=list(as.list(strsplit(sub(hmmscan.regex,"\\1\\2",basename),",",fixed=T)))]
+hmmscan[!grepl(hmmscan.regex,basename),CAZyFamily:=list(as.list(strsplit("",",",fixed=T)))]
 
 
 tf1.hmmscan <- read.hmm(tf1.hmmscan.path,tf.hmmscan.eval,tf.hmmscan.coverage)

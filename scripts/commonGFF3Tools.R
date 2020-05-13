@@ -197,6 +197,10 @@ parseCol9 <- function(textvector){
 }
 
 readBaseGFF <- function(df){
+    if(nrow(df)==0){
+      df$attributes <- NULL
+      return(df)
+    }
     df$seqid <- unescapeGFF3Col1(df$seqid)
     df$source <- unescapeGFF3Text(df$source)
     att <- df$attributes

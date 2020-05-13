@@ -75,7 +75,7 @@ ggplotly(ggplot(kofamrescounts) + aes(x=sample,y=rel,fill=source) + geom_bar(sta
 ```{r}
 contigcounts = unique(kofamres[,.(sample,cid,cds,source)])
 contigcounts = contigcounts[,.(rel=sum(!is.na(source))/.N*100),by=c("sample","cid")]
-ggplotly(ggplot(contigcounts) + aes(x=rel,color=sample) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="Sample",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")) + scale_color_brewer(palette = sample_palette))
+ggplotly(ggplot(contigcounts) + aes(x=rel,color=sample) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="Sample",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")) )
 ```
 
 > Which percentage of the contigs contains a annotation?
@@ -84,7 +84,7 @@ ggplotly(ggplot(contigcounts) + aes(x=rel,color=sample) +  geom_freqpoly(aes(y=1
 ### Score Distribution
 
 ```{r}
-ggplotly(ggplot(kofamres[!is.na(score)&score!=".",.(score=log10(as.numeric(score)+1),sample)]) + aes(x=score,color=sample) + scale_color_brewer(palette = sample_palette) + geom_density(trim=T) + labs(x="log(eval+1)",y="Density estimate",color="Sample"))
+ggplotly(ggplot(kofamres[!is.na(score)&score!=".",.(score=log10(as.numeric(score)+1),sample)]) + aes(x=score,color=sample)  + geom_density(trim=T) + labs(x="log(eval+1)",y="Density estimate",color="Sample"))
 ```
 
 > The distribution of the log10(e-values+1).

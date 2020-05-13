@@ -72,7 +72,7 @@ ggplotly(ggplot(dbCANrescounts) + aes(x=bin,y=rel,fill=source) + geom_bar(stat="
 ```{r}
 contigcounts <- unique(dbCANres[,.(bin,cid,cds,source)])
 contigcounts <- contigcounts[,.(rel=sum(!is.na(source))/.N*100),by=c("bin","cid")]
-ggplotly(ggplot(contigcounts) + aes(x=rel,color=bin) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="bin",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")) + scale_color_brewer(palette = sample_palette))
+ggplotly(ggplot(contigcounts) + aes(x=rel,color=bin) +  geom_freqpoly(aes(y=1*..density..*100),position='identity',binwidth=1) + labs(x="Of CDS in contig annotated",fill="bin",y="Of all Contigs") + scale_x_continuous(labels = function(x) paste0(x, "%")) + scale_y_continuous(labels = function(x) paste0(x, "%")) )
 ```
 
 > Which percentage of the contigs contains a annotation?
