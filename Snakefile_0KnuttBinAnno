@@ -761,6 +761,8 @@ rule kofammodules:
       type = "all|sure"
    output:
       kofam_tmp + "_kos_{type}_modules.tsv"
+   resources:
+      kegg = 1
    conda:
       "envs/R.yml"
    message:
@@ -912,7 +914,8 @@ rule allgff:
 rule all:
    version: "1.0"
    input:
-      expand(config["output_dir"] + "/Combined/{bin}.gff", bin=bins)
+      expand(config["output_dir"] + "/Combined/{bin}.gff", bin=bins),
+      expand(kofam_tmp + "_kos_{type}_modules.tsv", type=("all","sure"), bin=bins)
    message:
       "Finished annotating!"
 
